@@ -39,6 +39,50 @@ state = {
     "last_processed_tickets": load_processed_tickets()
 }
 
+# ---------- Text message processor (handles commands, psychology, analytics) ----------
+async def process_text_message(text: str, send_tool, insert_tool, notion_tool):
+    """Handle a text message (or transcribed voice) that is not a skip command."""
+    lower_text = text.strip().lower()
+    # Ignore empty
+    if not lower_text:
+        return
+    
+    # Commands: digest, news
+    if lower_text in ["digest", "/digest", "news", "/news"]:
+        print("   → Generating digest...")
+        digest = await generate_digest()
+        await send_tool.ainvoke({"text": digest})
+        print("   → Digest sent.")
+        return
+    
+    # If awaiting psychology and there's a current trade, treat as psychology entry
+    if state["awaiting_psychology"] and state["current_trade"] is not None:
+        print("   → Processing as psychology entry (text)...")
+        extracted = await extract_trade_psychology(text)
+        extracted = clean_extracted(extracted)
+        complete_entry = {**state["current_trade"], **extracted}
+        complete_entry["trade_id"] = f"{complete_entry['trade_date']}_{complete_entry['asset']}_{uuid.uuid4().hex[:6]}"
+        print(f"   → Complete entry: {json.dumps(complete_entry, indent=2)}")
+        db_result = await insert_tool.ainvoke({"trade_data": complete_entry})
+        db_text = extract_text_from_mcp_response(db_result)
+        db_success = "✅ Trade inserted successfully" in db_text
+        notion_success = False
+        if notion_tool:
+            notion_result = await notion_tool.ainvoke({"trade_data": complete_entry})
+            notion_text = extract_text_from_mcp_response(notion_result)
+            notion_success = "✅ Notion page created" in notion_text
+        clean_msg = f"✅ Journal saved for {complete_entry.get('asset')}.\nPostgreSQL: {'✅' if db_success else '❌'}\nNotion: {'✅' if notion_success else '❌'}"
+        await send_tool.ainvoke({"text": clean_msg})
+        state["awaiting_psychology"] = False
+        state["current_trade"] = None
+        return
+    
+    # Otherwise treat as analytics query
+    print(f"   → Treating as analytics query: {text}")
+    answer = await ask_question(text)
+    await send_tool.ainvoke({"text": answer})
+
+# ---------- Main orchestrator ----------
 async def run():
     client = MultiServerMCPClient({
         "telegram": {
@@ -78,7 +122,7 @@ async def run():
     allowed_commands = {"digest", "/digest", "news", "/news", "skip", "/skip"}
 
     print("Listening for messages... Commands: /digest, /news, /skip")
-    print("MT5 polling active...\n")
+    print("Voice commands (say 'news' or ask a question) are also supported.\n")
 
     mt5_task = asyncio.create_task(mt5_polling_task(mt5_tools, send_tool, state))
     queue_task = asyncio.create_task(queue_worker(send_tool, insert_tool, notion_tool, state))
@@ -111,7 +155,7 @@ async def run():
 
             if msg_type == "text":
                 text = upd.get("text", "").strip().lower()
-                # Handle /skip or skip
+                # /skip handled here because it's simple
                 if text in ["skip", "/skip"]:
                     if state["awaiting_psychology"] and state["current_trade"] is not None:
                         print("   → Skipped current trade")
@@ -121,65 +165,28 @@ async def run():
                     else:
                         await send_tool.ainvoke({"text": "ℹ️ No pending trade to skip."})
                     continue
-                # Handle digest / news commands
-                if text in allowed_commands:
-                    print("   → Generating digest...")
-                    digest = await generate_digest()
-                    await send_tool.ainvoke({"text": digest})
-                    print("   → Digest sent.")
-                    continue
-                # Handle psychology response if waiting
-                if state["awaiting_psychology"] and state["current_trade"] is not None:
-                    print("   → Processing as psychology entry (text)...")
-                    extracted = await extract_trade_psychology(text)
-                    extracted = clean_extracted(extracted)
-                    complete_entry = {**state["current_trade"], **extracted}
-                    complete_entry["trade_id"] = f"{complete_entry['trade_date']}_{complete_entry['asset']}_{uuid.uuid4().hex[:6]}"
-                    print(f"   → Complete entry: {json.dumps(complete_entry, indent=2)}")
-                    db_result = await insert_tool.ainvoke({"trade_data": complete_entry})
-                    db_text = extract_text_from_mcp_response(db_result)
-                    db_success = "✅ Trade inserted successfully" in db_text
-                    notion_success = False
-                    if notion_tool:
-                        notion_result = await notion_tool.ainvoke({"trade_data": complete_entry})
-                        notion_text = extract_text_from_mcp_response(notion_result)
-                        notion_success = "✅ Notion page created" in notion_text
-                    clean_msg = f"✅ Journal saved for {complete_entry.get('asset')}.\nPostgreSQL: {'✅' if db_success else '❌'}\nNotion: {'✅' if notion_success else '❌'}"
-                    await send_tool.ainvoke({"text": clean_msg})
-                    state["awaiting_psychology"] = False
-                    state["current_trade"] = None
-                    continue
-                # Otherwise treat as analytics query
-                print(f"   → Treating as analytics query: {text}")
-                answer = await ask_question(text)
-                await send_tool.ainvoke({"text": answer})
-                # No extra invalid input print
+                # All other text messages go to the processor
+                await process_text_message(text, send_tool, insert_tool, notion_tool)
 
             elif msg_type == "voice":
                 file_id = upd.get("file_id")
                 print("   → Voice message detected, transcribing...")
                 transcript = await transcribe_voice(bot_token, file_id)
                 print(f"   → Transcription: {transcript}")
-                if state["awaiting_psychology"] and state["current_trade"] is not None:
-                    print("   → Processing as psychology entry (voice)...")
-                    extracted = await extract_trade_psychology(transcript)
-                    extracted = clean_extracted(extracted)
-                    complete_entry = {**state["current_trade"], **extracted}
-                    complete_entry["trade_id"] = f"{complete_entry['trade_date']}_{complete_entry['asset']}_{uuid.uuid4().hex[:6]}"
-                    db_result = await insert_tool.ainvoke({"trade_data": complete_entry})
-                    db_text = extract_text_from_mcp_response(db_result)
-                    db_success = "✅ Trade inserted successfully" in db_text
-                    notion_success = False
-                    if notion_tool:
-                        notion_result = await notion_tool.ainvoke({"trade_data": complete_entry})
-                        notion_text = extract_text_from_mcp_response(notion_result)
-                        notion_success = "✅ Notion page created" in notion_text
-                    clean_msg = f"✅ Journal saved for {complete_entry.get('asset')}.\nPostgreSQL: {'✅' if db_success else '❌'}\nNotion: {'✅' if notion_success else '❌'}"
-                    await send_tool.ainvoke({"text": clean_msg})
-                    state["awaiting_psychology"] = False
-                    state["current_trade"] = None
+                # Treat the transcript as text input, but we must handle /skip? Unlikely, but we can call the same processor.
+                # However, skip is not a voice command; we'll just process as normal text.
+                lower_transcript = transcript.strip().lower()
+                if lower_transcript in ["skip", "/skip"]:
+                    # If someone says "skip" voice, handle it
+                    if state["awaiting_psychology"] and state["current_trade"] is not None:
+                        print("   → Skipped current trade (via voice)")
+                        await send_tool.ainvoke({"text": f"⏭️ Skipped {state['current_trade'].get('asset', 'trade')}."})
+                        state["awaiting_psychology"] = False
+                        state["current_trade"] = None
+                    else:
+                        await send_tool.ainvoke({"text": "ℹ️ No pending trade to skip."})
                 else:
-                    await send_tool.ainvoke({"text": f"📝 Transcription:\n{transcript}"})
+                    await process_text_message(transcript, send_tool, insert_tool, notion_tool)
             else:
                 print(f"   → Unhandled type: {msg_type}")
 
