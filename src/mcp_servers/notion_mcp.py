@@ -18,28 +18,30 @@ if not NOTION_API_KEY or not NOTION_DATABASE_ID:
     print("Error: NOTION_API_KEY and NOTION_DATABASE_ID must be set in .env", file=sys.stderr)
     sys.exit(1)
 
+def safe_text(value) -> str:
+    """Convert None or non-string to empty string."""
+    return value if isinstance(value, str) else ""
+
 async def create_journal_page(trade_data: dict) -> str:
-    """Create a page in Notion database from trade data."""
-    # Map direction to title case
     direction = trade_data.get("direction", "").capitalize()
     
     properties = {
-    "Trade ID": {"title": [{"text": {"content": trade_data.get("trade_id", "N/A")}}]},
-    "Date": {"date": {"start": trade_data.get("trade_date")}},
-    "Asset": {"select": {"name": trade_data.get("asset", "Unknown")}},
-    "Direction": {"select": {"name": direction}},
-    "Lot Size": {"number": trade_data.get("lot_size", 0)},
-    "Entry Price": {"number": trade_data.get("entry_price", 0)},
-    "Exit Price": {"number": trade_data.get("exit_price", 0)},
-    "Profit/Loss": {"number": trade_data.get("profit_loss", 0)},
-    "HTF Bias": {"select": {"name": trade_data.get("htf_bias", "neutral")}},
-    "Trade Logic": {"rich_text": [{"text": {"content": trade_data.get("trade_logic", "")}}]},
-    "Confluences": {"rich_text": [{"text": {"content": trade_data.get("confluences", "")}}]},
-    "Psychology During": {"rich_text": [{"text": {"content": trade_data.get("psychology_during", "")}}]},
-    "Psychology After": {"rich_text": [{"text": {"content": trade_data.get("psychology_after", "")}}]},
-    "Mistake": {"rich_text": [{"text": {"content": trade_data.get("mistake", "")}}]},
-    "Learning": {"rich_text": [{"text": {"content": trade_data.get("learning", "")}}]}
-}
+        "Trade ID": {"title": [{"text": {"content": safe_text(trade_data.get("trade_id", "N/A"))}}]},
+        "Date": {"date": {"start": trade_data.get("trade_date")}},
+        "Asset": {"select": {"name": safe_text(trade_data.get("asset", "Unknown"))}},
+        "Direction": {"select": {"name": direction if direction else "Unknown"}},
+        "Lot Size": {"number": trade_data.get("lot_size", 0)},
+        "Entry Price": {"number": trade_data.get("entry_price", 0)},
+        "Exit Price": {"number": trade_data.get("exit_price", 0)},
+        "Profit/Loss": {"number": trade_data.get("profit_loss", 0)},
+        "HTF Bias": {"select": {"name": safe_text(trade_data.get("htf_bias", "neutral"))}},
+        "Trade Logic": {"rich_text": [{"text": {"content": safe_text(trade_data.get("trade_logic", ""))}}]},
+        "Confluences": {"rich_text": [{"text": {"content": safe_text(trade_data.get("confluences", ""))}}]},
+        "Psychology During": {"rich_text": [{"text": {"content": safe_text(trade_data.get("psychology_during", ""))}}]},
+        "Psychology After": {"rich_text": [{"text": {"content": safe_text(trade_data.get("psychology_after", ""))}}]},
+        "Mistake": {"rich_text": [{"text": {"content": safe_text(trade_data.get("mistake", ""))}}]},
+        "Learning": {"rich_text": [{"text": {"content": safe_text(trade_data.get("learning", ""))}}]}
+    }
     
     url = "https://api.notion.com/v1/pages"
     headers = {
