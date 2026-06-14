@@ -66,12 +66,26 @@ async def process_text_message(text: str, send_tool, insert_tool, notion_tool):
         db_result = await insert_tool.ainvoke({"trade_data": complete_entry})
         db_text = extract_text_from_mcp_response(db_result)
         db_success = "✅ Trade inserted successfully" in db_text
+        
+        db_status_msg = ""
+        if not db_success:
+            db_status_msg = f"\n⚠️ Postgres Details: {db_text}" # Capture raw SQL error
+            
         notion_success = False
+        notion_status_msg = ""
         if notion_tool:
             notion_result = await notion_tool.ainvoke({"trade_data": complete_entry})
             notion_text = extract_text_from_mcp_response(notion_result)
             notion_success = "✅ Notion page created" in notion_text
-        clean_msg = f"✅ Journal saved for {complete_entry.get('asset')}.\nPostgreSQL: {'✅' if db_success else '❌'}\nNotion: {'✅' if notion_success else '❌'}"
+            if not notion_success:
+                notion_status_msg = f"\n⚠️ Notion Details: {notion_text}"
+        
+        # Combine everything into the final message
+        clean_msg = (
+            f"✅ Journal saved for {complete_entry.get('asset')}.\n"
+            f"PostgreSQL: {'✅' if db_success else '❌'}{db_status_msg}\n"
+            f"Notion: {'✅' if notion_success else '❌'}{notion_status_msg}"
+        )
         await send_tool.ainvoke({"text": clean_msg})
         state["awaiting_psychology"] = False
         state["current_trade"] = None

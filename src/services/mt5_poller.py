@@ -33,31 +33,48 @@ async def mt5_polling_task(mt5_tools, send_tool, state):
                     pass
             for trade in trades:
                 profit = trade.get("profit", 0.0)
+                # Only look at transactions that actually closed a position with profit/loss
                 if profit == 0.0:
                     continue
+                
+                # CRITICAL SAFETY: Use position_id for historical deduplication
+                pos_id = trade.get("position_id")
                 ticket = trade.get("ticket")
-                pos_id = trade.get("position_id", ticket)
-                if pos_id and pos_id not in state["last_processed_tickets"]:
-                    state["last_processed_tickets"].add(pos_id)
-                    save_processed_tickets(state["last_processed_tickets"])
-                    symbol = trade.get("symbol", "UNKNOWN")
-                    action = trade.get("action", "buy")
-                    direction = "long" if action == "buy" else "short"
-                    volume = trade.get("volume", 0.0)
-                    exit_price = trade.get("price", 0.0)
-                    trade_date = datetime.now().strftime("%Y-%m-%d")
-                    pending = {
-                        "trade_date": trade_date,
-                        "asset": symbol,
-                        "lot_size": volume,
-                        "entry_price": exit_price,
-                        "exit_price": exit_price,
-                        "direction": direction,
-                        "profit_loss": profit,
-                        "ticket": ticket
-                    }
-                    state["trade_queue"].append(pending)
-                    print(f"   → Trade {pos_id} (profit: {profit}) added to queue (size: {len(state['trade_queue'])})")
+                
+                # Fallback identifier if position_id is missing
+                tracking_id = str(pos_id if pos_id else ticket)
+                
+                # If we've seen this position lifecycle before, skip it completely!
+                if tracking_id in state["last_processed_tickets"]:
+                    continue
+                    
+                # Mark it as processed immediately so it never processes again
+                state["last_processed_tickets"].add(tracking_id)
+                save_processed_tickets(state["last_processed_tickets"])
+                
+                # --- Map data fields cleanly ---
+                symbol = trade.get("symbol", "UNKNOWN")
+                action = trade.get("action", "buy")
+                direction = "short" if action == "buy" else "long"
+                volume = trade.get("volume", 0.0)
+                exit_price = trade.get("price", 0.0)
+                true_entry_price = trade.get("entry_price", exit_price)
+                
+                trade_date = datetime.now().strftime("%Y-%m-%d")
+                pending = {
+                    "trade_date": trade_date,
+                    "asset": symbol,
+                    "lot_size": volume,
+                    "entry_price": true_entry_price,
+                    "exit_price": exit_price,
+                    "direction": direction,
+                    "profit_loss": profit,
+                    "ticket": ticket,
+                    "position_id": pos_id
+                }
+                
+                state["trade_queue"].append(pending)
+                print(f"   → Trade {tracking_id} (profit: {profit}) added to queue.")
         except Exception as e:
             print(f"⚠️ MT5 polling error: {e}")
         await asyncio.sleep(5)

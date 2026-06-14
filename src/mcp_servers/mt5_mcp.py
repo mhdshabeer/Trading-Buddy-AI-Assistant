@@ -38,14 +38,24 @@ async def get_closed_trades(days_back: int = 30) -> str:
     for deal in deals:
         # Only include actual buy/sell deals (skip deposits/withdrawals)
         if deal.type in [mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL]:
+            entry_price = deal.price  # Default fallback
+            position_id = deal.position_id
+            
+            # Query all deals tied to this exact position lifecycle
+            position_deals = mt5.history_deals_get(position=position_id)
+            if position_deals and len(position_deals) >= 2:
+                # Sort them by time so the earliest deal is always the entry
+                sorted_deals = sorted(position_deals, key=lambda d: d.time)
+                entry_price = sorted_deals[0].price  # True entry price!
             result.append({
                 "ticket": deal.ticket,
+                "position_id": deal.position_id,
                 "symbol": deal.symbol,
                 "action": "buy" if deal.type == mt5.DEAL_TYPE_BUY else "sell",
                 "volume": deal.volume,
-                "price": deal.price,
+                "price": deal.price,        # This is the execution price of THIS deal (Exit)
+                "entry_price": entry_price,  # This is the TRUE calculated entry price
                 "profit": deal.profit
-                # time field omitted – not needed for deduplication
             })
     return json.dumps(result, indent=2)
 

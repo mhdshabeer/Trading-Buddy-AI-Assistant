@@ -7,7 +7,7 @@ async def extract_trade_psychology(text: str) -> dict:
     prompt = f"""You are a trading journal assistant. Extract ONLY the following fields from the user's text. Return ONLY valid JSON, no extra text.
 
 Fields:
-- htf_bias (string, "bullish", "bearish", or "neutral", if not mentioned use null)
+- htf_bias (string, "bullish", "bearish", or "neutral", if not mentioned use "Unknown")
 - trade_logic (string, short sentence explaining why you took the trade)
 - confluences (string, e.g., "Fair Value Gap , OrderBlock , Strong candle close , double top")
 - psychology_during (string, how you felt while trade was open)
