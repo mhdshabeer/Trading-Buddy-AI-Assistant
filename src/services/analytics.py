@@ -69,7 +69,7 @@ SQL:
 """
 
 ANSWER_FORMAT_PROMPT = """
-You are a trading assistant. Given a user's question and the raw result from a SQL query (as JSON), write a short, friendly answer (one sentence if possible). Use numbers directly from the result.
+You are a trading assistant. Given a user's question and the raw result from a SQL query (as JSON), write a short answer . Use numbers directly from the result.
 
 Question: {question}
 SQL result: {result}
