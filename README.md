@@ -1,146 +1,184 @@
-# Trading Buddy AI  
-Autonomous AI Trading Journal Agent (MT5 + Telegram + LLM + PostgreSQL + Notion)
+# Trading Buddy AI
+
+**An autonomous AI agent that journals your MetaTrader 5 trades for you, straight through Telegram.**
+
+Close a trade. Speak your reasoning into a voice note. Everything else, transcription, psychology extraction, database storage, and analytics, happens automatically.
+
+---
+
+## Table of Contents
+
+- [TL;DR](#tldr)
+- [The Problem](#the-problem)
+- [How It Works](#how-it-works)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Project Structure](#project-structure)
+- [Trade Journaling Flow](#trade-journaling-flow)
+- [Database Schema](#database-schema)
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
+- [Usage](#usage)
+- [Key Design Decisions](#key-design-decisions)
+- [Engineering Notes & Known Limitations](#engineering-notes--known-limitations)
+- [Roadmap](#roadmap)
+- [Project Status](#project-status)
+- [License](#license)
+- [Author](#author)
 
 ---
 
 ## TL;DR
-AI agent that automatically journals your MetaTrader 5 trades via Telegram voice input, extracts structured psychology using LLMs, and stores everything in PostgreSQL + Notion with natural language analytics and on-demand market/news summaries.
+
+An AI agent that automatically journals your MetaTrader 5 trades via Telegram voice input, extracts structured trading psychology using an LLM, and stores everything in PostgreSQL and Notion, with natural language analytics and on-demand market and news summaries on top.
 
 ---
 
-## Overview
+## The Problem
 
-Trading Buddy AI removes all friction from trade journaling by automating the entire process — from trade detection to structured logging and analytics.
+Journaling is one of the highest-leverage habits a trader can build, and also one of the easiest to abandon. After a frustrating session, manually logging instrument, direction, entry, exit, and P&L is the last thing anyone wants to do. The result is either skipped entries or incomplete notes in a spreadsheet that never get revisited. Add in the occasional missed high-impact news event, and small gaps compound into genuinely poor decisions over time.
+
+Trading Buddy AI removes the friction entirely rather than trying to force discipline. The system does the detecting, prompting, transcribing, and storing. The only thing left for the trader to do is talk.
+
+---
+
+## How It Works
 
 When a trade closes in MT5, the system:
-- Detects it in real-time  
-- Prompts you via Telegram  
-- Accepts voice or text input  
-- Transcribes and extracts trading psychology using an LLM  
-- Stores structured data for both analytics and review  
+
+- Detects it in real time
+- Prompts the trader via Telegram
+- Accepts voice or text input
+- Transcribes and extracts trading psychology using an LLM
+- Stores the result for both human review and structured analytics
 
 No spreadsheets. No manual logging. No missed trades.
 
 ---
 
-## Key Features
+## Features
 
 ### Automated Trade Journaling
-- Real-time MT5 trade detection (≈5s latency)
-- Telegram prompts for instant journaling
-- Voice + text input support
+- Real-time MT5 trade detection, around 5 second latency
+- Telegram prompt sent the moment a trade closes
+- Voice or text input, whichever is faster in the moment
 - Zero manual data entry
 
 ### AI-Powered Psychology Extraction
-- Voice → text via local transcription (faster-whisper)
-- LLM extracts structured fields:
-  - HTF bias  
-  - Trade logic  
-  - Confluences  
-  - Psychology during & after  
-  - Mistakes & learnings  
+- Voice converted to text locally via faster-whisper, no API calls, no latency, no data leaving the machine
+- LLM extracts structured fields from free-form reasoning:
+  - HTF bias
+  - Trade logic
+  - Confluences
+  - Psychology during and after the trade
+  - Mistakes and learnings
 
 ### Natural Language Analytics
-Ask questions directly in Telegram:
-- “What’s my win rate when I felt impatient?”
-- “Total profit for EURUSD last month?”
-- “How many trades did I win this week?”
+Ask questions directly in Telegram, in plain English:
+- "What's my win rate when I felt impatient?"
+- "Total profit for EURUSD last month?"
+- "How many trades did I win this week?"
 
-Pipeline:
-NL → SQL → execution → formatted response
+Pipeline: natural language → generated SQL → execution against a read-only role → formatted response.
 
 ### On-Demand Market & News Digest
-- Triggered via `/digest`
-- Aggregates:
-  - Economic calendar (Forex Factory)
-  - Latest forex news (Finnhub)
+- Triggered with `/digest`
+- Aggregates the economic calendar (Forex Factory) and the latest forex news (Finnhub)
 - LLM generates a concise, actionable briefing
-- Highlights high-impact events separately
-- Fully on-demand (no spam)
+- High-impact events are surfaced separately
+- Fully on-demand, no scheduled spam
 
 ---
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    U[Telegram User] <--> TG[Telegram MCP Server]
+    TG <--> ORCH[Async Orchestrator]
+
+    ORCH <--> MT5S[MT5 MCP Server]
+    MT5S <--> MT5T[(MetaTrader 5 Terminal)]
+
+    ORCH <--> PGS[PostgreSQL MCP Server]
+    PGS <--> DB[(PostgreSQL)]
+
+    ORCH <--> NTS[Notion MCP Server]
+    NTS <--> NTN[(Notion)]
+
+    ORCH --> VOICE[Transcription Service]
+    ORCH --> LLM[LLM Processing - Groq]
+    ORCH --> DIGEST[Market Digest Service]
+    ORCH --> AN[Analytics Engine]
 ```
-Telegram User
-      ↕
-Telegram MCP Server
-      ↕
-Orchestrator (async event loop)
-      ├── MT5 MCP Server         ↔ MetaTrader 5 Terminal
-      ├── PostgreSQL MCP Server  ↔ Local Database
-      ├── Notion MCP Server      ↔ Notion API
-      └── Services:
-            ├── Transcription      (faster-whisper, local)
-            ├── LLM Processing     (Groq / LLaMA)
-            ├── Market Digest      (Forex Factory + Finnhub)
-            └── Analytics Engine   (NL → SQL → response)
+
+Each integration runs as an isolated MCP server. The orchestrator never talks to MetaTrader 5, Postgres, or Notion directly, it calls tools exposed by the relevant MCP server instead. This keeps every external dependency swappable without touching the core logic.
+
+| Server | Responsibility |
+|---|---|
+| Telegram MCP | Messaging and update polling |
+| MT5 MCP | Trade and account data |
+| PostgreSQL MCP | Data storage and queries |
+| Notion MCP | Journal visualization |
+
+---
+
+## Project Structure
+
+```
+Trading-Buddy-AI-Agent/
+├── src/
+│   ├── main.py                  # Entrypoint, launches the orchestrator
+│   ├── agent/
+│   │   └── orchestrator.py      # Core coordinator: MCP clients, state, message routing, persistence
+│   ├── services/
+│   │   ├── mt5_poller.py        # Polls MT5 for closed trades, deduplicates, queues them
+│   │   ├── queue_worker.py      # Drains the queue, manages the journaling conversation
+│   │   ├── voice.py             # Telegram voice download + local Whisper transcription
+│   │   ├── psychology.py        # LLM extraction of structured psychology fields
+│   │   ├── digest.py            # Pulls economic calendar + forex news, generates LLM summary
+│   │   └── analytics.py         # Natural language → SQL → execution → response
+│   ├── mcp_servers/
+│   │   ├── telegram_mcp.py      # send_message, poll_updates, offset persistence
+│   │   ├── postgresql_mcp.py    # insert_trade with field coercion
+│   │   ├── mt5_mcp.py           # MT5 wrappers: balance, closed trades, open positions
+│   │   └── notion_mcp.py        # create_journal_page, maps trade fields to Notion DB
+│   └── utils/
+│       └── helpers.py           # Ticket persistence, field cleanup, UTC to IST conversion
+├── requirements.txt
+├── .env.example
+└── README.md
 ```
 
 ---
 
 ## Trade Journaling Flow
 
-```
-MT5 trade closes
-      ↓
-Detected by polling engine (deduplicated via ticket tracking)
-      ↓
-Queued for processing
-      ↓
-Telegram prompt sent:
-"EURUSD +$120 — explain your logic, psychology, mistakes"
-      ↓
-User responds (voice/text)
-      ↓
-Voice → transcription (local)
-      ↓
-LLM extracts structured psychology (JSON schema)
-      ↓
-Merged with MT5 trade data
-      ↓
-Stored in:
-  • PostgreSQL (analytics)
-  • Notion (human-readable journal)
-      ↓
-Confirmation sent via Telegram
+```mermaid
+sequenceDiagram
+    participant MT5 as MetaTrader 5
+    participant Poller as MT5 Poller
+    participant Queue as Queue Worker
+    participant TG as Telegram
+    participant Whisper as Transcription
+    participant LLM as Groq LLM
+    participant DB as PostgreSQL
+    participant Notion as Notion
+
+    MT5->>Poller: Trade closes
+    Poller->>Queue: Deduplicate via ticket tracking, enqueue
+    Queue->>TG: "EURUSD +120, explain your logic and psychology"
+    TG->>Whisper: Voice or text reply
+    Whisper->>LLM: Transcribed text
+    LLM->>Queue: Structured psychology JSON
+    Queue->>DB: Insert trade + psychology
+    Queue->>Notion: Mirror journal entry
+    Queue->>TG: Confirmation sent
 ```
 
 ---
 
-## Tech Stack
-
-| Layer | Technology |
-|------|-----------|
-| Language | Python |
-| Orchestration | asyncio |
-| LLM | Groq (LLaMA models) |
-| Transcription | faster-whisper (local, CPU) |
-| Trading Platform | MetaTrader 5 (Python API) |
-| Architecture | MCP (Model Context Protocol) |
-| Messaging | Telegram Bot API |
-| Database | PostgreSQL |
-| Knowledge Mirror | Notion API |
-| APIs | Finnhub, Forex Factory |
-| HTTP Client | httpx |
-
----
-
-## MCP-Based Modular Design
-
-Each integration runs as an isolated subprocess (JSON-RPC over stdio):
-
-| Server | Responsibility |
-|--------|---------------|
-| Telegram MCP | Messaging + polling |
-| MT5 MCP | Trade + account data |
-| PostgreSQL MCP | Data storage + queries |
-| Notion MCP | Journal visualization |
-
----
-
-## Database Schema (Trades)
+## Database Schema
 
 ```sql
 CREATE TABLE trades (
@@ -165,32 +203,50 @@ CREATE TABLE trades (
 
 ---
 
-## Running Locally
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Language | Python |
+| Orchestration | asyncio |
+| LLM | Groq (LLaMA models) |
+| Transcription | faster-whisper (local, CPU) |
+| Trading Platform | MetaTrader 5 (Python API) |
+| Architecture | MCP (Model Context Protocol) |
+| Messaging | Telegram Bot API |
+| Database | PostgreSQL |
+| Knowledge Mirror | Notion API |
+| External APIs | Finnhub, Forex Factory |
+| HTTP Client | httpx |
+
+---
+
+## Getting Started
 
 ### Requirements
-- Windows (required for MT5 Python API)
+- Windows (required for the MT5 Python API)
 - MetaTrader 5 terminal running
 - Python 3.11+
 - PostgreSQL
 - Telegram bot credentials
 
-### Setup
+### Installation
 
 ```bash
-git clone https://github.com/mhdshabeer/Trading-Buddy-AI-Agent.git
+git clone https://github.com/mhdshabeer/Trading-Buddy-AI-Assistant.git
 cd Trading-Buddy-AI-Agent
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Fill `.env`:
+### Environment Variables
 
 ```
-GROQ_API_KEY = 
-mt5_ID = 
-mt5_PASSWORD = 
-TELEGRAM_BOT_TOKEN = 
-TELEGRAM_CHAT_ID = 
+GROQ_API_KEY=
+mt5_ID=
+mt5_PASSWORD=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
 FINNHUB_API_KEY=
 POSTGRES_HOST=
 POSTGRES_PORT=
@@ -209,44 +265,66 @@ python src/main.py
 
 ---
 
-## Commands
+## Usage
 
 | Command | Description |
-|--------|------------|
-| `/digest` | Market + news summary |
-| `/skip` | Skip current trade |
-| Any question | Triggers analytics query |
-| Voice note | Used for journaling |
+|---|---|
+| `/digest` | Market and news summary |
+| `/skip` | Skip the current trade |
+| Any question | Triggers a natural language analytics query |
+| Voice note | Used for journaling the current trade |
 
 ---
 
 ## Key Design Decisions
 
-- No LLM in polling loop → avoids unnecessary computation  
-- Local transcription → zero API cost, faster, private  
-- Queue-based journaling → prevents overlapping trade logs  
-- Dual storage (PostgreSQL + Notion)  
-- Persistent trade tracking → prevents duplicate entries  
+- **No LLM in the polling loop.** Polling only collects trade events, the LLM is invoked only when there is an actual decision to make. This avoids unnecessary computation and keeps the bot from responding to messages it was never meant to see.
+- **Local transcription.** Voice notes are transcribed on-device with faster-whisper, zero API cost, lower latency, and nothing leaves the machine.
+- **Queue-based journaling.** Trades are processed one at a time through a queue, preventing overlapping journal prompts when multiple trades close in quick succession.
+- **Dual storage.** PostgreSQL for structured analytics, Notion for a human-readable journal. Each serves a different purpose rather than duplicating the same one.
+- **Persistent trade tracking.** Processed ticket IDs and the Telegram update offset are both persisted to disk, so a restart never replays old trades or old messages.
+
+---
+
+## Engineering Notes & Known Limitations
+
+This project optimizes for working software first, and is upfront about the tradeoffs that come with that.
+
+**Already hardened:**
+- The analytics path is restricted to SELECT-only queries, runs against a read-only database role, and blocks dangerous keywords before execution. The model never gets write access to the database.
+- Blocking calls (the Groq client, Whisper transcription) run off the main event loop, so a single slow transcription can't stall the rest of the bot.
+- Ticket and update-offset persistence no longer depends on the process's working directory.
+
+**Still in progress:**
+- `orchestrator.py` currently owns message routing, state management, and persistence decisions in one file. Splitting it into a `CommandHandler`, `MessageRouter`, and `TradeJournalFlow` is the next refactor.
+- Trade and psychology data are passed around as plain dictionaries rather than typed models (dataclasses or Pydantic).
+- No automated test suite yet for trade deduplication, message routing, or the analytics SQL guardrails.
+- No graceful shutdown or cancellation strategy for the background polling tasks, the process is currently just stopped.
+
+---
+
+## Roadmap
+
+- [ ] Typed domain models for trades, psychology entries, and complete journal entries
+- [ ] Test suite covering dedupe logic, message routing, and analytics SQL constraints
+- [ ] Split the orchestrator into smaller, single-responsibility components
+- [ ] Docker containerization
+- [ ] Cloud deployment (AWS EC2)
 
 ---
 
 ## Project Status
 
 Core system fully functional:
-- Trade detection  
-- Voice journaling  
-- Psychology extraction  
-- Analytics queries  
-- Market/news digest  
 
-Built and tested on real MT5 trades, Telegram interactions, and a live PostgreSQL database.
+- [x] Trade detection
+- [x] Voice journaling
+- [x] Psychology extraction
+- [x] PostgreSQL + Notion storage
+- [x] Natural language analytics
+- [x] Market and news digest
 
----
-
-## Roadmap (v2)
-
-- Docker containerization  
-- Cloud deployment (AWS EC2)  
+Built and tested against real MT5 trades, live Telegram interactions, and a live PostgreSQL database.
 
 ---
 
@@ -258,4 +336,6 @@ MIT License
 
 ## Author
 
-Mohammed Shabeer
+**Mohammed Shabeer**
+
+Currently looking for AI/ML internship opportunities.
