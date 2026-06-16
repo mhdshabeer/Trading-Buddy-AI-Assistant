@@ -126,7 +126,7 @@ Each integration runs as an isolated MCP server. The orchestrator never talks to
 ## Project Structure
 
 ```
-Trading-Buddy-AI-Agent/
+Trading-Buddy-AI-Assistant/
 ├── src/
 │   ├── main.py                  # Entrypoint, launches the orchestrator
 │   ├── agent/
@@ -234,7 +234,7 @@ CREATE TABLE trades (
 
 ```bash
 git clone https://github.com/mhdshabeer/Trading-Buddy-AI-Assistant.git
-cd Trading-Buddy-AI-Agent
+cd Trading-Buddy-AI-Assistant
 pip install -r requirements.txt
 cp .env.example .env
 ```
@@ -283,6 +283,8 @@ python src/main.py
 - **Queue-based journaling.** Trades are processed one at a time through a queue, preventing overlapping journal prompts when multiple trades close in quick succession.
 - **Dual storage.** PostgreSQL for structured analytics, Notion for a human-readable journal. Each serves a different purpose rather than duplicating the same one.
 - **Persistent trade tracking.** Processed ticket IDs and the Telegram update offset are both persisted to disk, so a restart never replays old trades or old messages.
+- **MCP over plain function calls.** Everything here runs in a single process, so direct function calls between the orchestrator and each integration would have worked fine and added less overhead. MCP was used anyway, on purpose, because the goal of this project was to actually build and understand a modular, tool-calling agent architecture rather than take the shortest path to a working bot.
+- **PostgreSQL over SQLite.** For a single-user local journal, SQLite would have been the lighter, more obvious choice, no server process, no connection management. PostgreSQL was chosen instead to get hands-on with a real relational database: roles and permissions (used directly for the read-only analytics role), proper typed columns, and a setup that carries over cleanly if the system ever needs concurrent access or moves to the cloud.
 
 ---
 
