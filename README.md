@@ -149,6 +149,7 @@ Trading-Buddy-AI-Assistant/
 ├── .env.example
 └── README.md
 ```
+Note: The scripts folder contains just code that was used for testing and building the project, and is not needed for the working of the project
 
 ---
 
@@ -339,5 +340,3 @@ MIT License
 ## Author
 
 **Mohammed Shabeer**
-
-Currently looking for AI/ML internship opportunities.
